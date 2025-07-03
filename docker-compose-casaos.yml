@@ -1,0 +1,413 @@
+version: '3.8'
+
+networks:
+  supabase_network:
+    driver: bridge
+
+services:
+  studio:
+    container_name: supabase-studio
+    image: supabase/studio:2025.06.02-sha-8f2993d
+    restart: unless-stopped
+    networks:
+      - supabase_network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://studio:3000/api/platform/profile').then((r) => {if (r.status !== 200) throw new Error(r.status)})"
+        ]
+      timeout: 10s
+      interval: 5s
+      retries: 3
+    depends_on:
+      analytics:
+        condition: service_healthy
+    environment:
+      STUDIO_PG_META_URL: http://meta:8080
+      POSTGRES_PASSWORD: "your-super-secret-and-long-postgres-password" # REQUIRED - CHANGE THIS!
+      DEFAULT_ORGANIZATION_NAME: "Default Organization"
+      DEFAULT_PROJECT_NAME: "Default Project"
+      OPENAI_API_KEY: "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"
+      SUPABASE_URL: http://kong:8000 # Internal URL to Kong
+      SUPABASE_PUBLIC_URL: "http://localhost:54321" # External URL pointing to Kong
+      SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+      SUPABASE_SERVICE_KEY: "your-super-secret-service-role-key" # REQUIRED - CHANGE THIS!
+      AUTH_JWT_SECRET: "your-super-secret-jwt-token-with-at-least-32-characters-long" # REQUIRED - CHANGE THIS!
+      LOGFLARE_PRIVATE_ACCESS_TOKEN: "your-logflare-private-access-token" # Optional
+      LOGFLARE_URL: http://analytics:4000
+      NEXT_PUBLIC_ENABLE_LOGS: "true"
+      NEXT_ANALYTICS_BACKEND_PROVIDER: "postgres"
+    ports:
+      - "54323:3000" # Studio Port
+
+  kong:
+    container_name: supabase-kong
+    image: kong:2.8.1
+    restart: unless-stopped
+    networks:
+      - supabase_network
+    ports:
+      - "54321:8000/tcp" # Kong HTTP Port (Supabase API Gateway)
+      - "8443:8443/tcp"   # Kong HTTPS (if you configure SSL) - Optional for CasaOS basic setup
+    volumes:
+      - /DATA/AppData/supabase/volumes/api/kong.yml:/home/kong/temp.yml:ro
+    depends_on:
+      analytics:
+        condition: service_healthy
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+      SUPABASE_SERVICE_KEY: "your-super-secret-service-role-key" # REQUIRED - CHANGE THIS!
+      DASHBOARD_USERNAME: "depaulogroup"
+      DASHBOARD_PASSWORD: "JonathasMicael@@102030"
+    entrypoint: bash -c 'eval "echo \"$$(cat ~/temp.yml)\"" > ~/kong.yml && /docker-entrypoint.sh kong docker-start'
+
+  auth:
+    container_name: supabase-auth
+    image: supabase/gotrue:v2.174.0
+    restart: unless-stopped
+    networks:
+      - supabase_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    depends_on:
+      db:
+        condition: service_healthy
+      analytics:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: "http://localhost:54321" # External URL pointing to Kong
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: "postgres://supabase_auth_admin:your-super-secret-and-long-postgres-password@db:5432/postgres" # REQUIRED - Update PG Password
+      GOTRUE_SITE_URL: "http://localhost:54323" # URL to your frontend/Studio for email links
+      GOTRUE_URI_ALLOW_LIST: ""
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_SECRET: "your-super-secret-jwt-token-with-at-least-32-characters-long" # REQUIRED - CHANGE THIS!
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"
+      GOTRUE_MAILER_AUTOCONFIRM: "false" # Set to "true" to disable email confirmation
+      GOTRUE_SMTP_ADMIN_EMAIL: "admin@example.com"
+      GOTRUE_SMTP_HOST: "your-smtp-host" # REQUIRED for email features - e.g., smtp.example.com or use a mail container
+      GOTRUE_SMTP_PORT: "587" # REQUIRED for email features - e.g., 587 or 465 or 25
+      GOTRUE_SMTP_USER: "your-smtp-user" # REQUIRED for email features
+      GOTRUE_SMTP_PASS: "your-smtp-password" # REQUIRED for email features
+      GOTRUE_SMTP_SENDER_NAME: "Supabase"
+      GOTRUE_MAILER_URLPATHS_INVITE: "/auth/v1/verify"
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: "/auth/v1/verify"
+      GOTRUE_MAILER_URLPATHS_RECOVERY: "/auth/v1/verify"
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: "/auth/v1/verify"
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "true" # Set to false if not using phone auth
+      GOTRUE_SMS_AUTOCONFIRM: "true" # Set to false to require SMS confirmation
+
+  rest:
+    container_name: supabase-rest
+    image: postgrest/postgrest:v12.2.12
+    restart: unless-stopped
+    networks:
+      - supabase_network
+    depends_on:
+      db:
+        condition: service_healthy
+      analytics:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: "postgres://authenticator:your-super-secret-and-long-postgres-password@db:5432/postgres" # REQUIRED - Update PG Password
+      PGRST_DB_SCHEMAS: "public,storage,graphql_public"
+      PGRST_DB_ANON_ROLE: "anon"
+      PGRST_JWT_SECRET: "your-super-secret-jwt-token-with-at-least-32-characters-long" # REQUIRED - CHANGE THIS!
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_APP_SETTINGS_JWT_SECRET: "your-super-secret-jwt-token-with-at-least-32-characters-long" # REQUIRED - CHANGE THIS!
+      PGRST_APP_SETTINGS_JWT_EXP: "3600"
+
+  realtime:
+    container_name: realtime-dev.supabase-realtime
+    image: supabase/realtime:v2.34.47
+    restart: unless-stopped
+    networks:
+      - supabase_network
+    depends_on:
+      db:
+        condition: service_healthy
+      analytics:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "-H", "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0", "http://localhost:4000/api/tenants/realtime-dev/health"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    environment:
+      PORT: 4000
+      DB_HOST: "db"
+      DB_PORT: "5432"
+      DB_USER: "supabase_admin"
+      DB_PASSWORD: "your-super-secret-and-long-postgres-password" # REQUIRED - Update PG Password
+      DB_NAME: "postgres"
+      DB_AFTER_CONNECT_QUERY: 'SET search_path TO _realtime'
+      DB_ENC_KEY: "your-32-byte-random-db-enc-key" # REQUIRED - CHANGE THIS!
+      API_JWT_SECRET: "your-super-secret-jwt-token-with-at-least-32-characters-long" # REQUIRED - CHANGE THIS!
+      SECRET_KEY_BASE: "your-super-secret-and-long-secret-key-base" # REQUIRED - CHANGE THIS!
+      ERL_AFLAGS: -proto_dist inet_tcp
+      DNS_NODES: "''"
+      RLIMIT_NOFILE: "10000"
+      APP_NAME: "realtime"
+      SEED_SELF_HOST: "true"
+      RUN_JANITOR: "true"
+
+  storage:
+    container_name: supabase-storage
+    image: supabase/storage-api:v1.23.0
+    restart: unless-stopped
+    networks:
+      - supabase_network
+    volumes:
+      - /DATA/AppData/supabase/volumes/storage:/var/lib/storage
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://storage:5000/status"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+      imgproxy:
+        condition: service_started
+    environment:
+      ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+      SERVICE_KEY: "your-super-secret-service-role-key" # REQUIRED - CHANGE THIS!
+      POSTGREST_URL: http://rest:3000
+      PGRST_JWT_SECRET: "your-super-secret-jwt-token-with-at-least-32-characters-long" # REQUIRED - CHANGE THIS!
+      DATABASE_URL: "postgres://supabase_storage_admin:your-super-secret-and-long-postgres-password@db:5432/postgres" # REQUIRED - Update PG Password
+      FILE_SIZE_LIMIT: 52428800 # 50MB
+      STORAGE_BACKEND: "file"
+      FILE_STORAGE_BACKEND_PATH: "/var/lib/storage"
+      TENANT_ID: "stub" # Usually project ref
+      REGION: "stub"
+      GLOBAL_S3_BUCKET: "stub"
+      ENABLE_IMAGE_TRANSFORMATION: "true"
+      IMGPROXY_URL: "http://imgproxy:5001"
+
+  imgproxy:
+    container_name: supabase-imgproxy
+    image: darthsim/imgproxy:v3.8.0
+    restart: unless-stopped
+    networks:
+      - supabase_network
+    volumes:
+      - /DATA/AppData/supabase/volumes/storage:/var/lib/storage # Must match storage volume path
+    healthcheck:
+      test: ["CMD", "imgproxy", "health"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    environment:
+      IMGPROXY_BIND: ":5001"
+      IMGPROXY_LOCAL_FILESYSTEM_ROOT: "/"
+      IMGPROXY_USE_ETAG: "true"
+      IMGPROXY_ENABLE_WEBP_DETECTION: "true"
+
+  meta:
+    container_name: supabase-meta
+    image: supabase/postgres-meta:v0.89.3
+    restart: unless-stopped
+    networks:
+      - supabase_network
+    depends_on:
+      db:
+        condition: service_healthy
+      analytics:
+        condition: service_healthy
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: "db"
+      PG_META_DB_PORT: "5432"
+      PG_META_DB_NAME: "postgres"
+      PG_META_DB_USER: "supabase_admin"
+      PG_META_DB_PASSWORD: "your-super-secret-and-long-postgres-password" # REQUIRED - Update PG Password
+
+  functions:
+    container_name: supabase-edge-functions
+    image: supabase/edge-runtime:v1.67.4
+    restart: unless-stopped
+    networks:
+      - supabase_network
+    volumes:
+      - /DATA/AppData/supabase/volumes/functions:/home/deno/functions
+    depends_on:
+      analytics:
+        condition: service_healthy
+    environment:
+      JWT_SECRET: "your-super-secret-jwt-token-with-at-least-32-characters-long" # REQUIRED - CHANGE THIS!
+      SUPABASE_URL: "http://kong:8000" # Internal URL to Kong
+      SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+      SUPABASE_SERVICE_ROLE_KEY: "your-super-secret-service-role-key" # REQUIRED - CHANGE THIS!
+      SUPABASE_DB_URL: "postgresql://postgres:your-super-secret-and-long-postgres-password@db:5432/postgres" # REQUIRED - Update PG Password
+      VERIFY_JWT: "false" # Set to "true" to verify JWTs for all functions
+    command: ["start", "--main-service", "/home/deno/functions/main"]
+
+  analytics:
+    container_name: supabase-analytics
+    image: supabase/logflare:1.14.2
+    restart: unless-stopped
+    networks:
+      - supabase_network
+    ports:
+      - "4001:4000" # Changed internal port exposure to avoid conflict if another service uses 4000 on host
+    healthcheck:
+      test: ["CMD", "curl", "http://localhost:4000/health"] # Test internal port
+      timeout: 5s
+      interval: 5s
+      retries: 10
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      LOGFLARE_NODE_HOST: "127.0.0.1"
+      DB_USERNAME: "supabase_admin"
+      DB_DATABASE: "_supabase" # Special DB for analytics
+      DB_HOSTNAME: "db"
+      DB_PORT: "5432"
+      DB_PASSWORD: "your-super-secret-and-long-postgres-password" # REQUIRED - Update PG Password
+      DB_SCHEMA: "_analytics"
+      LOGFLARE_PUBLIC_ACCESS_TOKEN: "your-logflare-public-access-token" # Optional
+      LOGFLARE_PRIVATE_ACCESS_TOKEN: "your-logflare-private-access-token" # Optional
+      LOGFLARE_SINGLE_TENANT: "true"
+      LOGFLARE_SUPABASE_MODE: "true"
+      LOGFLARE_MIN_CLUSTER_SIZE: 1
+      POSTGRES_BACKEND_URL: "postgresql://supabase_admin:your-super-secret-and-long-postgres-password@db:5432/_supabase" # REQUIRED - Update PG Password
+      POSTGRES_BACKEND_SCHEMA: "_analytics"
+      LOGFLARE_FEATURE_FLAG_OVERRIDE: "multibackend=true"
+
+  db:
+    container_name: supabase-db
+    image: supabase/postgres:15.8.1.060
+    restart: unless-stopped
+    networks:
+      - supabase_network
+    ports:
+      - "54322:5432" # PostgreSQL Port
+    volumes:
+      - /DATA/AppData/supabase/volumes/db/realtime.sql:/docker-entrypoint-initdb.d/migrations/99-realtime.sql:ro
+      - /DATA/AppData/supabase/volumes/db/webhooks.sql:/docker-entrypoint-initdb.d/init-scripts/98-webhooks.sql:ro
+      - /DATA/AppData/supabase/volumes/db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
+      - /DATA/AppData/supabase/volumes/db/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:ro
+      - /DATA/AppData/supabase/volumes/db/data:/var/lib/postgresql/data
+      - /DATA/AppData/supabase/volumes/db/_supabase.sql:/docker-entrypoint-initdb.d/migrations/97-_supabase.sql:ro
+      - /DATA/AppData/supabase/volumes/db/logs.sql:/docker-entrypoint-initdb.d/migrations/99-logs.sql:ro
+      - /DATA/AppData/supabase/volumes/db/pooler.sql:/docker-entrypoint-initdb.d/migrations/99-pooler.sql:ro
+      - db-config:/etc/postgresql-custom
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost", "-p", "5432"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    depends_on:
+      vector:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: "/var/run/postgresql" # Use socket for local connections
+      PGPORT: "5432" # Internal port
+      POSTGRES_PORT: "5432" # Internal port
+      POSTGRES_PASSWORD: "your-super-secret-and-long-postgres-password" # REQUIRED - CHANGE THIS!
+      PGDATABASE: "postgres"
+      POSTGRES_DB: "postgres"
+      JWT_SECRET: "your-super-secret-jwt-token-with-at-least-32-characters-long" # REQUIRED - CHANGE THIS!
+      JWT_EXP: "3600"
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "log_min_messages=fatal"]
+
+  vector:
+    container_name: supabase-vector
+    image: timberio/vector:0.28.1-alpine
+    restart: unless-stopped
+    networks:
+      - supabase_network
+    volumes:
+      - /DATA/AppData/supabase/volumes/logs/vector.yml:/etc/vector/vector.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro # Default Docker socket location for CasaOS/Linux
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://vector:9001/health"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    environment:
+      LOGFLARE_PUBLIC_ACCESS_TOKEN: "your-logflare-public-access-token" # Optional
+    command: ["--config", "/etc/vector/vector.yml"]
+    security_opt:
+      - "label=disable"
+
+  supavisor:
+    container_name: supabase-pooler
+    image: supabase/supavisor:2.5.1
+    restart: unless-stopped
+    networks:
+      - supabase_network
+    ports:
+      - "6543:6543" # Supavisor transaction mode port. If you want this to be the main DB access point, map to 54322:5432
+    volumes:
+      - /DATA/AppData/supabase/volumes/pooler/pooler.exs:/etc/pooler/pooler.exs:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://127.0.0.1:4000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      db:
+        condition: service_healthy
+      analytics:
+        condition: service_healthy
+    environment:
+      PORT: 4000
+      POSTGRES_PORT: "5432" # Internal PG port
+      POSTGRES_DB: "postgres"
+      POSTGRES_PASSWORD: "your-super-secret-and-long-postgres-password" # REQUIRED - Update PG Password
+      DATABASE_URL: "ecto://supabase_admin:your-super-secret-and-long-postgres-password@db:5432/_supabase" # REQUIRED - Update PG Password
+      CLUSTER_POSTGRES: "true"
+      SECRET_KEY_BASE: "your-super-secret-and-long-secret-key-base" # REQUIRED - CHANGE THIS!
+      VAULT_ENC_KEY: "your-encryption-key-32-chars-min" # REQUIRED - CHANGE THIS!
+      API_JWT_SECRET: "your-super-secret-jwt-token-with-at-least-32-characters-long" # REQUIRED - CHANGE THIS!
+      METRICS_JWT_SECRET: "your-super-secret-jwt-token-with-at-least-32-characters-long" # REQUIRED - CHANGE THIS!
+      REGION: "local"
+      ERL_AFLAGS: -proto_dist inet_tcp
+      POOLER_TENANT_ID: "local_tenant" # Can be any string
+      POOLER_DEFAULT_POOL_SIZE: "20"
+      POOLER_MAX_CLIENT_CONN: "100"
+      POOLER_POOL_MODE: "transaction"
+    command: ["/bin/sh", "-c", "/app/bin/migrate && /app/bin/supavisor eval \"$$(cat /etc/pooler/pooler.exs)\" && /app/bin/server"]
+
+volumes:
+  db-config:
+    driver: local
+    driver_opts:
+      type: none
+      device: /DATA/AppData/supabase/volumes/db-config # CasaOS persistent path for this named volume
+      o: bind
+# Reminder:
+# 1. YOU MUST CHANGE ALL "your-super-secret-..." passwords and keys to strong, unique values.
+# 2. Ensure the directory structure /DATA/AppData/supabase/volumes/ exists on your CasaOS host.
+# 3. Place necessary config files (kong.yml, *.sql, vector.yml, pooler.exs) into the
+#    respective subdirectories under /DATA/AppData/supabase/volumes/ before starting.
+#    These files can be sourced from the official Supabase repository (docker/volumes).
+# 4. Configure SMTP settings in the 'auth' service for email functionalities.
+# 5. The 'analytics' service port was changed to 4001:4000 to avoid potential conflicts on the host.
+# 6. Initialization SQL scripts are now marked as read-only (:ro) for safety after initial setup.
+#    If you need to re-run or modify them, you might need to remove :ro temporarily for the db service volumes.
+# 7. Review all "REQUIRED - CHANGE THIS!" comments.
+```
