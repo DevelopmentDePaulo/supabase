@@ -1,0 +1,119 @@
+version: '3.8'
+
+networks:
+  supabase_network:
+    driver: bridge
+
+services:
+  studio-test1:
+    container_name: supabase-studio-test1
+    image: supabase/studio:2025.06.02-sha-8f2993d
+    restart: unless-stopped
+    networks:
+      - supabase_network
+    depends_on:
+      kong-test1:
+        condition: service_started
+      meta-test1:
+        condition: service_started
+    environment:
+      STUDIO_PG_META_URL: http://meta-test1:8080
+      POSTGRES_PASSWORD: "your-super-secret-and-long-postgres-password" # REQUIRED - CHANGE THIS!
+      DEFAULT_ORGANIZATION_NAME: "Default Organization"
+      DEFAULT_PROJECT_NAME: "Default Project Test1"
+      OPENAI_API_KEY: "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"
+      SUPABASE_URL: http://kong-test1:8000
+      SUPABASE_PUBLIC_URL: "http://localhost:54321"
+      SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+      SUPABASE_SERVICE_KEY: "your-super-secret-service-role-key" # REQUIRED - CHANGE THIS!
+      AUTH_JWT_SECRET: "your-super-secret-jwt-token-with-at-least-32-characters-long" # REQUIRED - CHANGE THIS!
+      NEXT_PUBLIC_ENABLE_LOGS: "true"
+      NEXT_ANALYTICS_BACKEND_PROVIDER: "postgres"
+    ports:
+      - "54323:3000"
+
+  kong-test1:
+    container_name: supabase-kong-test1
+    image: kong:2.8.1
+    restart: unless-stopped
+    networks:
+      - supabase_network
+    ports:
+      - "54321:8000/tcp"
+    volumes:
+      - /DATA/AppData/supabase/volumes/api/kong.yml:/home/kong/temp.yml:ro
+    depends_on:
+      db-test1:
+        condition: service_healthy
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+      SUPABASE_SERVICE_KEY: "your-super-secret-service-role-key" # REQUIRED - CHANGE THIS!
+      DASHBOARD_USERNAME: "depaulogroup"
+      DASHBOARD_PASSWORD: "JonathasMicael@@102030"
+    entrypoint: bash -c 'eval "echo \"$$(cat ~/temp.yml)\"" > ~/kong.yml && /docker-entrypoint.sh kong docker-start'
+
+  db-test1:
+    container_name: supabase-db-test1
+    image: supabase/postgres:15.8.1.060
+    restart: unless-stopped
+    networks:
+      - supabase_network
+    ports:
+      - "54322:5432"
+    volumes:
+      - /DATA/AppData/supabase/volumes/db/realtime.sql:/docker-entrypoint-initdb.d/migrations/99-realtime.sql:ro
+      - /DATA/AppData/supabase/volumes/db/webhooks.sql:/docker-entrypoint-initdb.d/init-scripts/98-webhooks.sql:ro
+      - /DATA/AppData/supabase/volumes/db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
+      - /DATA/AppData/supabase/volumes/db/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:ro
+      - /DATA/AppData/supabase/volumes/db/data-test1:/var/lib/postgresql/data
+      - /DATA/AppData/supabase/volumes/db/_supabase.sql:/docker-entrypoint-initdb.d/migrations/97-_supabase.sql:ro
+      - /DATA/AppData/supabase/volumes/db/logs.sql:/docker-entrypoint-initdb.d/migrations/99-logs.sql:ro
+      - /DATA/AppData/supabase/volumes/db/pooler.sql:/docker-entrypoint-initdb.d/migrations/99-pooler.sql:ro
+      - db-config-test1:/etc/postgresql-custom
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost", "-p", "5432"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      POSTGRES_HOST: "/var/run/postgresql"
+      PGPORT: "5432"
+      POSTGRES_PORT: "5432"
+      POSTGRES_PASSWORD: "your-super-secret-and-long-postgres-password" # REQUIRED - CHANGE THIS!
+      PGDATABASE: "postgres"
+      POSTGRES_DB: "postgres"
+      JWT_SECRET: "your-super-secret-jwt-token-with-at-least-32-characters-long" # REQUIRED - CHANGE THIS!
+      JWT_EXP: "3600"
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "log_min_messages=fatal"]
+
+  meta-test1:
+    container_name: supabase-meta-test1
+    image: supabase/postgres-meta:v0.89.3
+    restart: unless-stopped
+    networks:
+      - supabase_network
+    depends_on:
+      db-test1:
+        condition: service_healthy
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: "db-test1"
+      PG_META_DB_PORT: "5432"
+      PG_META_DB_NAME: "postgres"
+      PG_META_DB_USER: "supabase_admin"
+      PG_META_DB_PASSWORD: "your-super-secret-and-long-postgres-password" # REQUIRED - CHANGE THIS!
+
+volumes:
+  db-config-test1:
+    driver: local
+    driver_opts:
+      type: none
+      device: /DATA/AppData/supabase/volumes/db-config-test1
+      o: bind
+```
